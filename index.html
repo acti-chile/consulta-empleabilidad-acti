@@ -103,7 +103,13 @@
     padding:13px 16px;border-bottom:1px solid var(--line);background:#fff}
   .sub-row:last-child{border-bottom:none}
   .sub-row .lbl{font-size:14.5px;font-weight:600;color:#27384a}
-  .sub-row input{width:120px;flex:none;text-align:right}
+  .sub-row input{width:110px;flex:none;text-align:right}
+  .sub-row input:disabled{background:#f1f4f8;cursor:not-allowed}
+  .sub-in{display:flex;align-items:center;gap:8px;flex:none}
+  .sub-in .of{font-size:13px;color:var(--muted);font-weight:600;min-width:52px;font-variant-numeric:tabular-nums}
+  .row-err{display:none;font-size:12.5px;color:var(--err);font-weight:600;margin-top:3px}
+  .row-err.show{display:block}
+  .sub-row.bad .lbl{color:var(--err)}
 
   /* ---------- Opciones ---------- */
   .opts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
@@ -188,7 +194,7 @@
     .nav{flex-direction:column-reverse}
     .btn-ghost{width:100%}
     .sub-row{flex-direction:column;align-items:stretch;gap:8px}
-    .sub-row input{width:100%;text-align:left}
+    .sub-in input{flex:1;width:auto;text-align:left}
     .sumrow{flex-direction:column;gap:2px}
     .sumrow .k{max-width:none}
     .sumrow .v{text-align:left}
@@ -220,7 +226,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVlCctox4EOCd6
 const FECHA_LIMITE = '';
 // MODO PRUEBA: true = sin campos obligatorios ni validaciones (para revisar el flujo).
 // Cambiar a false antes de enviar el formulario a los socios.
-const MODO_PRUEBA = true;
+const MODO_PRUEBA = false;
 
 /* =====================================================================
    Opciones (si se cambian aquí, cambiarlas también en el Apps Script)
@@ -432,21 +438,25 @@ function viewEmpresa(){
 
 function viewDotacion(){
   const rows=DOT_SUB.map(s=>`
-    <div class="sub-row">
-      <label class="lbl" for="f-dot.${s.k}">${s.l}</label>
-      <input id="f-dot.${s.k}" type="number" min="0" step="1" inputmode="numeric" data-bind="dot.${s.k}" value="${esc(state.dot[s.k])}" placeholder="—">
+    <div class="sub-row" id="row-${s.k}">
+      <div><label class="lbl" for="f-dot.${s.k}">${s.l}</label><div class="row-err" id="err-${s.k}"></div></div>
+      <div class="sub-in">
+        <input id="f-dot.${s.k}" type="number" min="0" step="1" inputmode="numeric" data-bind="dot.${s.k}" data-dot value="${esc(state.dot[s.k])}" placeholder="—">
+        <span class="of" id="of-${s.k}"></span>
+      </div>
     </div>`).join('');
   return card('Pregunta 1','Dotación actual',
     '¿Cuántas personas trabajan actualmente en su empresa?',
     `<div class="total-box">
       <div class="field">
         <label for="f-dot.total">Total de trabajadores <span class="req">*</span></label>
-        <input id="f-dot.total" type="number" min="0" step="1" inputmode="numeric" data-bind="dot.total" value="${esc(state.dot.total)}" placeholder="0">
+        <input id="f-dot.total" type="number" min="0" step="1" inputmode="numeric" data-bind="dot.total" data-dot value="${esc(state.dot.total)}" placeholder="0">
         <span class="hint">Considere a todas las personas con contrato de trabajo vigente en la empresa.</span>
       </div>
     </div>
     <h3 class="q">Del total, ¿cuántas personas son…? <span class="opt" style="font-family:'Hanken Grotesk';font-size:14px;font-weight:500;color:var(--muted)">(opcional)</span></h3>
     <p class="hint" style="margin-bottom:6px">Si no cuenta con el dato, deje el campo en blanco. Si no hay personas en esa categoría, ingrese 0.</p>
+    <p class="hint" id="dot-hint" style="margin-bottom:6px;color:var(--blue);font-weight:600">Ingrese primero el total de trabajadores para completar estas categorías.</p>
     <div class="sub-rows">${rows}</div>`);
 }
 
@@ -556,10 +566,42 @@ function render(opts){
   else html=viewConfirmacion();
   document.getElementById('wrap').classList.toggle('noanim',!o.anim);
   app.innerHTML=html;
-  bind(); updateProgress();
+  bind(); updateProgress(); if(key==='dotacion'&&!state.submitted) checkDot();
   if(o.scroll) window.scrollTo({top:0,behavior:'smooth'});
 }
 function softRender(){render({scroll:false,anim:false});}
+
+/* Control en vivo de la dotación: los subgrupos no pueden superar el total */
+function checkDot(){
+  const tEl=document.querySelector('[data-bind="dot.total"]'); if(!tEl) return true;
+  const tv=String(state.dot.total).trim(), T=isInt(tv)?+tv:null;
+  let ok=true;
+  const setRow=(k,msg)=>{
+    const row=document.getElementById('row-'+k), err=document.getElementById('err-'+k),
+          inp=document.querySelector(`[data-bind="dot.${k}"]`);
+    row.classList.toggle('bad',!!msg); err.textContent=msg||''; err.classList.toggle('show',!!msg);
+    inp.classList.toggle('error',!!msg); if(msg) ok=false;
+  };
+  DOT_SUB.forEach(s=>{
+    const inp=document.querySelector(`[data-bind="dot.${s.k}"]`);
+    inp.disabled=(T===null);
+    inp.placeholder=T===null?'—':'0 a '+T;
+    if(T===null) inp.removeAttribute('max'); else inp.max=T;
+    document.getElementById('of-'+s.k).textContent=T===null?'':'de '+T;
+    const v=String(state.dot[s.k]).trim();
+    if(T!==null&&v!==''&&!isInt(v)) setRow(s.k,'Use solo números enteros.');
+    else if(T!==null&&v!==''&&+v>T) setRow(s.k,'Supera el total de trabajadores ('+T+').');
+    else setRow(s.k,'');
+  });
+  const j=String(state.dot.jovenes).trim(), m=String(state.dot.mayores).trim();
+  if(T!==null&&isInt(j)&&isInt(m)&&+j<=T&&+m<=T&&(+j)+(+m)>T){
+    const msg='25–35 años y mayores de 50 suman '+((+j)+(+m))+', más que el total ('+T+').';
+    setRow('jovenes',msg); setRow('mayores',msg);
+  }
+  const hint=document.getElementById('dot-hint');
+  if(hint) hint.style.display=T===null?'block':'none';
+  return ok;
+}
 
 function updateProgress(){
   const tb=document.getElementById('topbar');
@@ -579,7 +621,8 @@ function bind(){
     if(el.type==='checkbox'){
       el.addEventListener('change',()=>{setByPath(el.dataset.bind,el.checked);if(el.checked)showErr(null);autoSave();});
     }else{
-      el.addEventListener('input',()=>{setByPath(el.dataset.bind,el.value);el.classList.remove('error');autoSave();});
+      el.addEventListener('input',()=>{setByPath(el.dataset.bind,el.value);el.classList.remove('error');autoSave();if(el.hasAttribute('data-dot')){checkDot();showErr(null);}});
+      if(el.hasAttribute('data-dot')) el.addEventListener('keydown',e=>{if(['e','E','+','-','.',','].includes(e.key))e.preventDefault();});
     }
     if(state.sending) el.disabled=true;
   });
